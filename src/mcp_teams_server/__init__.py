@@ -85,9 +85,31 @@ async def app_lifespan(server: FastMCP) -> AsyncIterator[AppContext]:
     yield AppContext(client=client)
 
 
+def _resolve_host() -> str:
+    """Bind host for the HTTP (sse) transport.
+
+    Defaults to 0.0.0.0 so the server is reachable by Cloud Run's startup
+    probe and load balancer, which connect from outside the container. The
+    FastMCP default of 127.0.0.1 only accepts loopback connections and causes
+    the startup TCP probe to fail.
+    """
+    return os.environ.get("FASTMCP_HOST", "0.0.0.0")
+
+
+def _resolve_port() -> int:
+    """Bind port for the HTTP (sse) transport.
+
+    Honors Cloud Run's injected PORT env var, falling back to FASTMCP_PORT and
+    then 8000.
+    """
+    return int(os.environ.get("PORT", os.environ.get("FASTMCP_PORT", "8000")))
+
+
 mcp = FastMCP(
     "mcp-teams-server",
     lifespan=app_lifespan,
+    host=_resolve_host(),
+    port=_resolve_port(),
     dependencies=[
         "aiohttp",
         "asyncio",
@@ -211,10 +233,30 @@ def main() -> None:
         choices=["stdio", "sse"],
     )
 
+    parser.add_argument(
+        "--host",
+        type=str,
+        default=_resolve_host(),
+        help="Host/interface to bind the HTTP (sse) transport to "
+        "(default 0.0.0.0; env FASTMCP_HOST)",
+    )
+
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=_resolve_port(),
+        help="Port to bind the HTTP (sse) transport to "
+        "(default 8000; env PORT then FASTMCP_PORT)",
+    )
+
     args = parser.parse_args()
 
+    mcp.settings.host = args.host
+    mcp.settings.port = args.port
+
     LOGGER.info(
-        f'Starting MCP Teams Server "{__version__}" with transport "{args.transport}"'
+        f'Starting MCP Teams Server "{__version__}" with transport '
+        f'"{args.transport}" binding {args.host}:{args.port}'
     )
     _check_required_environment()
 
